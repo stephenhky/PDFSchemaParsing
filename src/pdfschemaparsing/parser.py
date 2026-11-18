@@ -39,6 +39,32 @@ class ParsedSection:
         return data
 
 
+def _serialize_flat_sections(sections: list[ParsedSection]) -> dict[str, Any]:
+    """Recursively serialize a list of ParsedSection objects into a flat dictionary.
+
+    Handles:
+    - Arbitrary nesting depth (`subsections` inside `subsections`)
+    - Repeated inner headings with the same title (disambiguated as `"Title"`, `"Title (2)"`, etc.,
+      or preserved under their distinct resolved titles like `"1.1 Section 1"`, `"1.2 Section 2"`)
+    """
+    out: dict[str, Any] = {}
+    title_counts: dict[str, int] = {}
+    for sec in sections:
+        base_title = sec.title
+        count = title_counts.get(base_title, 0) + 1
+        title_counts[base_title] = count
+        key = base_title if count == 1 else f"{base_title} ({count})"
+
+        if sec.subsections:
+            out[key] = {
+                "content": sec.content,
+                "subsections": _serialize_flat_sections(sec.subsections),
+            }
+        else:
+            out[key] = sec.content
+    return out
+
+
 @dataclass
 class ParseResult:
     """Container for parsed document sections with flexible dictionary and JSON serialization."""
@@ -74,15 +100,7 @@ class ParseResult:
             out: dict[str, Any] = {}
             if self.preamble is not None:
                 out["_preamble"] = self.preamble
-            for sec in self.sections:
-                if sec.subsections:
-                    sub_map = {sub.title: sub.content for sub in sec.subsections}
-                    out[sec.title] = {
-                        "content": sec.content,
-                        "subsections": sub_map,
-                    }
-                else:
-                    out[sec.title] = sec.content
+            out.update(_serialize_flat_sections(self.sections))
             if include_footnotes:
                 out["_footnotes"] = {fn.id: fn.content for fn in self.footnotes}
             return out

@@ -115,6 +115,11 @@ class SectionSpec:
                 prefixes.append(cleaned)
         return prefixes
 
+    @property
+    def has_placeholder(self) -> bool:
+        """Return True if the title or any alias explicitly contains a placeholder token like `{n}` or `*`."""
+        return any(bool(_PLACEHOLDER_TOKEN_RE.search(c)) for c in self.all_candidate_titles())
+
 
 @dataclass
 class DocumentSchema:
