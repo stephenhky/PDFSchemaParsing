@@ -10,6 +10,7 @@ from typing import Any, BinaryIO, Mapping, Sequence
 from pdfschemaparsing.ingestors.base import TextLine
 from pdfschemaparsing.ingestors.markdown_ingestor import ingest_markdown
 from pdfschemaparsing.ingestors.pdf_ingestor import ingest_pdf
+from pdfschemaparsing.footnotes import Footnote, extract_footnotes_from_lines
 from pdfschemaparsing.matcher import find_section_matches
 from pdfschemaparsing.normalizer import clean_inner_text
 from pdfschemaparsing.schema import DocumentSchema, MissingRequiredSectionError, SectionSpec
@@ -44,12 +45,29 @@ class ParseResult:
 
     sections: list[ParsedSection]
     preamble: str | None = None
+    footnotes: list[Footnote] = field(default_factory=list)
+
+    def get_footnotes(
+        self,
+        *,
+        as_flat_dict: bool = False,
+        as_json: bool = False,
+    ) -> list[dict[str, Any]] | dict[str, str] | str:
+        """Return extracted footnotes as a list of dicts, `{id: content}` dict, or JSON string."""
+        if as_flat_dict:
+            data: Any = {fn.id: fn.content for fn in self.footnotes}
+        else:
+            data = [fn.to_dict() for fn in self.footnotes]
+        if as_json:
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        return data
 
     def to_dict(
         self,
         *,
         as_flat_dict: bool = False,
         include_metadata: bool = True,
+        include_footnotes: bool = False,
     ) -> dict[str, Any]:
         """Convert parsed sections to either a structured list dictionary or `{title: inner_text}` mapping."""
         if as_flat_dict:
@@ -65,6 +83,8 @@ class ParseResult:
                     }
                 else:
                     out[sec.title] = sec.content
+            if include_footnotes:
+                out["_footnotes"] = {fn.id: fn.content for fn in self.footnotes}
             return out
 
         result: dict[str, Any] = {
@@ -72,6 +92,8 @@ class ParseResult:
         }
         if self.preamble is not None:
             result["preamble"] = self.preamble
+        if include_footnotes:
+            result["footnotes"] = [fn.to_dict() for fn in self.footnotes]
         return result
 
     def to_json(
@@ -79,11 +101,16 @@ class ParseResult:
         *,
         as_flat_dict: bool = False,
         include_metadata: bool = True,
+        include_footnotes: bool = False,
         indent: int = 2,
     ) -> str:
         """Serialize the parsed result directly to a JSON string."""
         return json.dumps(
-            self.to_dict(as_flat_dict=as_flat_dict, include_metadata=include_metadata),
+            self.to_dict(
+                as_flat_dict=as_flat_dict,
+                include_metadata=include_metadata,
+                include_footnotes=include_footnotes,
+            ),
             indent=indent,
             ensure_ascii=False,
         )
@@ -100,6 +127,7 @@ class SchemaParser:
 
     def parse_lines(self, lines: list[TextLine]) -> ParseResult:
         """Segment a list of ingested TextLine objects according to `self.schema`."""
+        footnotes = extract_footnotes_from_lines(lines)
         sections, preamble = self._segment_block(
             lines=lines,
             specs=self.schema.sections,
@@ -108,6 +136,7 @@ class SchemaParser:
         return ParseResult(
             sections=sections,
             preamble=preamble if self.schema.capture_preamble else None,
+            footnotes=footnotes,
         )
 
     def _segment_block(
@@ -138,14 +167,23 @@ class SchemaParser:
         preamble: str | None = None
         if is_top_level and self.schema.capture_preamble:
             first_idx = matches[0].start_line_idx if matches else len(lines)
-            preamble = clean_inner_text([ln.text for ln in lines[:first_idx]])
+            preamble = clean_inner_text(
+                [
+                    ln.text
+                    for ln in lines[:first_idx]
+                    if not ln.is_decorative_rule and not ln.is_footnote
+                ],
+                strip_inline_footnote_refs=True,
+            )
 
         parsed_by_match: list[ParsedSection] = []
         for idx, match in enumerate(matches):
             body_start = match.end_line_idx + 1
             body_end = matches[idx + 1].start_line_idx if (idx + 1 < len(matches)) else len(lines)
             slice_lines = [
-                ln for ln in lines[body_start:body_end] if not ln.is_decorative_rule
+                ln
+                for ln in lines[body_start:body_end]
+                if not ln.is_decorative_rule and not ln.is_footnote
             ]
 
             if match.inline_remainder:
@@ -169,7 +207,10 @@ class SchemaParser:
                 )
                 if sub_Matches:
                     lead_end = sub_Matches[0].start_line_idx
-                    lead_text = clean_inner_text([ln.text for ln in slice_lines[:lead_end]])
+                    lead_text = clean_inner_text(
+                        [ln.text for ln in slice_lines[:lead_end]],
+                        strip_inline_footnote_refs=True,
+                    )
                     subsections, _ = self._segment_block(
                         lines=slice_lines,
                         specs=match.spec.subsections,
@@ -192,7 +233,10 @@ class SchemaParser:
                                 f"Required subsection '{sub_spec.title}' under '{match.spec.title}' was not found."
                             )
 
-            body_text = clean_inner_text([ln.text for ln in slice_lines])
+            body_text = clean_inner_text(
+                [ln.text for ln in slice_lines],
+                strip_inline_footnote_refs=True,
+            )
             parsed_by_match.append(
                 ParsedSection(
                     title=match.spec.title,
@@ -305,6 +349,71 @@ class SchemaParser:
             as_flat_dict=as_flat_dict,
             include_metadata=include_metadata,
         )
+
+    def extract_footnotes(
+        self,
+        source: str | Path | bytes | BinaryIO,
+        *,
+        as_json: bool = False,
+        as_flat_dict: bool = False,
+        backend: str = "auto",
+    ) -> list[dict[str, Any]] | dict[str, str] | str:
+        """Extract footnotes from a PDF or Markdown document."""
+        return extract_footnotes(
+            source,
+            as_json=as_json,
+            as_flat_dict=as_flat_dict,
+            y_tolerance=self.schema.y_tolerance,
+            strip_running_headers=self.schema.strip_running_headers,
+            backend=backend,
+        )
+
+
+def extract_footnotes(
+    source: str | Path | bytes | BinaryIO,
+    *,
+    as_json: bool = False,
+    as_flat_dict: bool = False,
+    y_tolerance: float = 3.0,
+    strip_running_headers: bool = True,
+    backend: str = "auto",
+) -> list[dict[str, Any]] | dict[str, str] | str:
+    """Extract all footnotes from a PDF or Markdown document.
+
+    Returns:
+    - By default (`as_flat_dict=False`): `[{"id": "1", "content": "...", "page": 1}, ...]`
+    - When `as_flat_dict=True`: `{"1": "...", "2": "..."}`
+    - When `as_json=True`: A JSON string representation of the above.
+    """
+    is_pdf = False
+    if isinstance(source, (bytes, bytearray)) or hasattr(source, "read"):
+        is_pdf = True
+    elif isinstance(source, Path) and source.suffix.lower() == ".pdf":
+        is_pdf = True
+    elif isinstance(source, str) and "\n" not in source and source.lower().endswith(".pdf"):
+        if Path(source).exists():
+            is_pdf = True
+
+    if is_pdf:
+        lines = ingest_pdf(
+            source,
+            y_tolerance=y_tolerance,
+            strip_running_headers=strip_running_headers,
+            backend=backend,
+        )
+    else:
+        if not isinstance(source, (str, Path)):
+            raise TypeError(f"Expected str or Path for Markdown source, got {type(source).__name__}")
+        lines = ingest_markdown(source)
+
+    footnotes = extract_footnotes_from_lines(lines)
+    if as_flat_dict:
+        data: Any = {fn.id: fn.content for fn in footnotes}
+    else:
+        data = [fn.to_dict() for fn in footnotes]
+    if as_json:
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    return data
 
 
 def parse_markdown(

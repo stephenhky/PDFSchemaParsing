@@ -10,9 +10,11 @@ from pdfschemaparsing.parser import (
     ParsedSection,
     ParseResult,
     SchemaParser,
+    extract_footnotes,
     parse_markdown,
     parse_pdf,
 )
+from pdfschemaparsing.footnotes import Footnote
 from pdfschemaparsing.schema import (
     DocumentSchema,
     MissingRequiredSectionError,
@@ -22,6 +24,7 @@ from pdfschemaparsing.schema import (
 
 __all__ = [
     "DocumentSchema",
+    "Footnote",
     "MissingRequiredSectionError",
     "ParseResult",
     "ParsedSection",
@@ -30,6 +33,7 @@ __all__ = [
     "SectionSpec",
     "canonicalize_header",
     "clean_inner_text",
+    "extract_footnotes",
     "normalize_unicode_and_whitespace",
     "parse_markdown",
     "parse_pdf",

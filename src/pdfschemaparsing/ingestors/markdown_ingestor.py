@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from pdfschemaparsing.footnotes import mark_and_extract_markdown_footnotes
 from pdfschemaparsing.ingestors.base import TextLine
 from pdfschemaparsing.normalizer import normalize_unicode_and_whitespace
 
@@ -42,6 +43,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
 
     raw_lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     result: list[TextLine] = []
+    aligned_raw_lines: list[str] = []
     in_code_fence = False
     fence_marker: str | None = None
 
@@ -67,6 +69,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                     in_code_block=True,
                 )
             )
+            aligned_raw_lines.append(raw_line)
             line_idx += 1
             i += 1
             continue
@@ -83,6 +86,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                         is_decorative_rule=True,
                     )
                 )
+                aligned_raw_lines.append(raw_line)
                 line_idx += 1
                 i += 1
                 continue
@@ -101,6 +105,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                             is_bold=True,
                         )
                     )
+                    aligned_raw_lines.append(raw_line)
                     line_idx += 1
                     i += 2  # Consume both the title line and the === underline
                     continue
@@ -115,6 +120,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                             is_bold=True,
                         )
                     )
+                    aligned_raw_lines.append(raw_line)
                     line_idx += 1
                     i += 2  # Consume both the title line and the --- underline
                     continue
@@ -133,6 +139,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                         is_bold=True,
                     )
                 )
+                aligned_raw_lines.append(raw_line)
                 line_idx += 1
                 i += 1
                 continue
@@ -149,6 +156,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                         is_bold=True,
                     )
                 )
+                aligned_raw_lines.append(raw_line)
                 line_idx += 1
                 i += 1
                 continue
@@ -161,7 +169,9 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                 in_code_block=in_code_fence,
             )
         )
+        aligned_raw_lines.append(raw_line)
         line_idx += 1
         i += 1
 
+    mark_and_extract_markdown_footnotes(result, raw_lines=aligned_raw_lines)
     return result

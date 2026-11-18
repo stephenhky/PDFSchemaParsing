@@ -54,6 +54,9 @@ _NON_WORD_PUNCT_RE = re.compile(r"[^\w\s&/+-]+", re.UNICODE)
 # Hyphenated word wrap across line breaks: e.g., "infor-\nmation" -> "information"
 _HYPHEN_LINEBREAK_RE = re.compile(r"([A-Za-z]{2,})-\n\s*([a-z]{2,})")
 
+# Inline Markdown footnote reference markers inside prose, e.g. "text[^1]." -> "text."
+_INLINE_MD_FOOTNOTE_REF_RE = re.compile(r"\[\^[^\]]+\]")
+
 # Multiple consecutive blank lines (3 or more newlines -> 2 newlines)
 _EXCESS_NEWLINES_RE = re.compile(r"\n{3,}")
 
@@ -137,6 +140,7 @@ def clean_inner_text(
     lines: list[str],
     *,
     dehyphenate: bool = True,
+    strip_inline_footnote_refs: bool = False,
 ) -> str:
     """Clean extracted section inner text while preserving paragraph structure."""
     if not lines:
@@ -145,5 +149,7 @@ def clean_inner_text(
     joined = "\n".join(cleaned_lines).strip()
     if dehyphenate:
         joined = _HYPHEN_LINEBREAK_RE.sub(r"\1\2", joined)
+    if strip_inline_footnote_refs:
+        joined = _INLINE_MD_FOOTNOTE_REF_RE.sub("", joined)
     joined = _EXCESS_NEWLINES_RE.sub("\n\n", joined)
     return joined.strip()

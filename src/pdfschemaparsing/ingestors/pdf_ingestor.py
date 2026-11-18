@@ -9,6 +9,7 @@ import re
 from statistics import median
 from typing import BinaryIO
 
+from pdfschemaparsing.footnotes import mark_and_extract_pdf_page_footnotes
 from pdfschemaparsing.ingestors.base import TextLine
 from pdfschemaparsing.normalizer import canonicalize_header, normalize_unicode_and_whitespace
 
@@ -368,6 +369,9 @@ def ingest_pdf(
 
     if strip_running_headers:
         page_lines = strip_running_headers_and_footers(page_lines)
+
+    for plist in page_lines:
+        mark_and_extract_pdf_page_footnotes(plist)
 
     # Flatten pages and re-index lines sequentially
     flat_lines: list[TextLine] = []

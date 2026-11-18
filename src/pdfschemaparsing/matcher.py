@@ -186,7 +186,7 @@ def find_section_matches(
 
     while i < n:
         line = lines[i]
-        if line.is_blank or line.in_code_block or line.is_decorative_rule:
+        if line.is_blank or line.in_code_block or line.is_decorative_rule or line.is_footnote:
             i += 1
             continue
 
@@ -202,6 +202,7 @@ def find_section_matches(
             and not lines[i + 1].is_blank
             and not lines[i + 1].in_code_block
             and not lines[i + 1].is_decorative_rule
+            and not lines[i + 1].is_footnote
             and lines[i].page == lines[i + 1].page
             and _looks_like_standalone_header(
                 lines, i, i + 1, max_words=max_header_words, max_chars=max_header_chars

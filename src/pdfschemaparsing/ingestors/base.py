@@ -20,6 +20,9 @@ class TextLine:
     x0: float | None = None
     in_code_block: bool = False
     is_decorative_rule: bool = False
+    is_footnote: bool = False
+    footnote_id: str | None = None
+    footnote_body: str | None = None
 
     @property
     def is_blank(self) -> bool:

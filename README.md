@@ -11,6 +11,7 @@ A resilient, schema-driven Python parser for **PDF** and **Markdown** documents.
   - **Multi-Line Wrapped Headings**: Detects headings wrapped across two lines.
   - **Inline Headings**: Splits bold/delimited inline headers (`**Abstract:** This study...`) into the matched section and its body text.
   - **Running Header & Footer Removal (PDF)**: Strips repeated page headers/footers and standalone page numbers across multi-page PDFs.
+  - **Footnote Filtering & Extraction**: Automatically excludes Markdown and bottom-of-page PDF footnotes (and inline `[^id]` references) from main section inner texts, and provides `parser.extract_footnotes(...)` / `extract_footnotes(...)` to retrieve them separately.
   - **Fuzzy Matching**: Tolerates minor OCR artifacts or typos in headings via configurable similarity thresholds.
 
 ---
@@ -239,6 +240,58 @@ print(parser.parse(filing_text, as_flat_dict=True, as_json=True))
 {
   "Business Overview": "We design and manufacture modular energy storage systems.",
   "Risk Factors": "Fluctuations in lithium carbonate supply could impact margins."
+}
+```
+
+---
+
+### 5. Ignoring Footnotes in Main Text & Extracting Footnotes Separately
+
+Footnotes in both Markdown (`[^1]: ...`, `¹ ...`, `[1] ...`) and PDF documents (bottom-of-page smaller-font footnotes) are automatically excluded from the returned section inner texts. You can retrieve all footnotes using `parser.extract_footnotes(...)` or the standalone `extract_footnotes(...)` function:
+
+```python
+from pdfschemaparsing import SchemaParser, extract_footnotes
+
+md_with_footnotes = """
+# 1. Executive Summary
+Revenue increased by 24% year-over-year[^1] driven by enterprise adoption.
+
+[^1]: Audited figures exclude Q4 divestitures.
+    Additional accounting details are available in Appendix B.
+
+# 2. Methodology
+We evaluated 10,000 samples across three regions[^note-b].
+² Regional weights were calibrated using 2025 census data.
+
+---
+[^note-b]: Europe, North America, and APAC.
+"""
+
+parser = SchemaParser(["Executive Summary", "Methodology"])
+
+# 1. Main section text automatically ignores footnotes and strips inline [^...] markers
+print(parser.parse_markdown(md_with_footnotes, as_flat_dict=True, as_json=True))
+
+# 2. Extract footnotes via SchemaParser method or standalone extract_footnotes()
+print(parser.extract_footnotes(md_with_footnotes, as_flat_dict=True, as_json=True))
+# Or as a structured list with page numbers:
+# print(extract_footnotes("annual_report.pdf", as_json=True))
+```
+
+**Main Text Output (footnotes excluded):**
+```json
+{
+  "Executive Summary": "Revenue increased by 24% year-over-year driven by enterprise adoption.",
+  "Methodology": "We evaluated 10,000 samples across three regions."
+}
+```
+
+**Extracted Footnotes Output (`parser.extract_footnotes(..., as_flat_dict=True)`):**
+```json
+{
+  "1": "Audited figures exclude Q4 divestitures.\nAdditional accounting details are available in Appendix B.",
+  "2": "Regional weights were calibrated using 2025 census data.",
+  "note-b": "Europe, North America, and APAC."
 }
 ```
 
