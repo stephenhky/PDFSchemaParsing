@@ -12,6 +12,7 @@ A resilient, schema-driven Python parser for **PDF** and **Markdown** documents.
   - **Inline Headings**: Splits bold/delimited inline headers (`**Abstract:** This study...`) into the matched section and its body text.
   - **Running Header & Footer Removal (PDF)**: Strips repeated page headers/footers and standalone page numbers across multi-page PDFs.
   - **Footnote Filtering & Extraction**: Automatically excludes Markdown and bottom-of-page PDF footnotes (and inline `[^id]` references) from main section inner texts, and provides `parser.extract_footnotes(...)` / `extract_footnotes(...)` to retrieve them separately.
+  - **Consecutive Repeating Sections**: Supports consecutive headings (`"Chapter 1"`, `"Chapter 2"`, `"Chapter III - Applications"`, etc.) sharing the same subsections via placeholder syntax (`"Chapter {n}"` / `"Chapter *"`) or `repeatable=True`.
   - **Fuzzy Matching**: Tolerates minor OCR artifacts or typos in headings via configurable similarity thresholds.
 
 ---
@@ -292,6 +293,92 @@ print(parser.extract_footnotes(md_with_footnotes, as_flat_dict=True, as_json=Tru
   "1": "Audited figures exclude Q4 divestitures.\nAdditional accounting details are available in Appendix B.",
   "2": "Regional weights were calibrated using 2025 census data.",
   "note-b": "Europe, North America, and APAC."
+}
+```
+
+---
+
+### 6. Consecutive Repeating Headings Sharing the Same Subsections (`Chapter 1`, `Chapter 2`, ...)
+
+For consecutive sections like `"Chapter 1"`, `"Chapter 2: Advanced Layout Recovery"`, `"Chapter III - Applications"` that all share the same internal subsection template, specify `"title": "Chapter {n}"` (or `"Chapter *"`, or set `"repeatable": True` on `"title": "Chapter"`):
+
+```python
+from pdfschemaparsing import parse_markdown
+
+book_md = """
+# Preface
+Welcome to the textbook.
+
+# Chapter 1
+Introductory text for Chapter 1.
+
+## 1.1 Motivation
+Why we study resilient parsing.
+
+## 1.2 Summary
+Key takeaways of Chapter 1.
+
+# Chapter 2: Advanced Layout Recovery
+Introductory text for Chapter 2.
+
+## 2.1 Motivation
+Handling PDF coordinate jitter.
+
+## 2.2 Summary
+Key takeaways of Chapter 2.
+
+# Chapter III - Applications
+Introductory text for Chapter 3.
+
+## 3.1 Motivation
+Real-world deployment scenarios.
+
+## 3.2 Summary
+Key takeaways of Chapter 3.
+"""
+
+schema = {
+    "ordered": True,
+    "sections": [
+        {"title": "Preface"},
+        {
+            "title": "Chapter {n}",  # Or {"title": "Chapter", "repeatable": True}
+            "subsections": [
+                {"title": "Motivation", "aliases": ["Background"]},
+                {"title": "Summary", "aliases": ["Takeaways"]},
+            ],
+        },
+    ],
+}
+
+print(parse_markdown(book_md, schema, as_flat_dict=True, as_json=True))
+```
+
+**Output:**
+```json
+{
+  "Preface": "Welcome to the textbook.",
+  "Chapter 1": {
+    "content": "Introductory text for Chapter 1.",
+    "subsections": {
+      "Motivation": "Why we study resilient parsing.",
+      "Summary": "Key takeaways of Chapter 1."
+    }
+  },
+  "Chapter 2: Advanced Layout Recovery": {
+    "content": "Introductory text for Chapter 2.",
+    "subsections": {
+      "Motivation": "Handling PDF coordinate jitter.",
+      "Summary": "Key takeaways of Chapter 2."
+    }
+  },
+  "Chapter III - Applications": {
+    "content": "Introductory text for Chapter 3.",
+    "subsections": {
+      "Motivation": "Real-world deployment scenarios.",
+      "Summary": "Key takeaways of Chapter 3."
+    }
+  }
 }
 ```
 

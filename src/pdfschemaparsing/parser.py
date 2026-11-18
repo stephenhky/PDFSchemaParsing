@@ -178,6 +178,7 @@ class SchemaParser:
 
         parsed_by_match: list[ParsedSection] = []
         for idx, match in enumerate(matches):
+            effective_title = match.resolved_title or match.spec.title
             body_start = match.end_line_idx + 1
             body_end = matches[idx + 1].start_line_idx if (idx + 1 < len(matches)) else len(lines)
             slice_lines = [
@@ -218,7 +219,7 @@ class SchemaParser:
                     )
                     parsed_by_match.append(
                         ParsedSection(
-                            title=match.spec.title,
+                            title=effective_title,
                             content=lead_text,
                             matched_header=match.matched_header,
                             subsections=subsections,
@@ -230,7 +231,7 @@ class SchemaParser:
                     for sub_spec in match.spec.subsections:
                         if sub_spec.required:
                             raise MissingRequiredSectionError(
-                                f"Required subsection '{sub_spec.title}' under '{match.spec.title}' was not found."
+                                f"Required subsection '{sub_spec.title}' under '{effective_title}' was not found."
                             )
 
             body_text = clean_inner_text(
@@ -239,7 +240,7 @@ class SchemaParser:
             )
             parsed_by_match.append(
                 ParsedSection(
-                    title=match.spec.title,
+                    title=effective_title,
                     content=body_text,
                     matched_header=match.matched_header,
                     subsections=[],
@@ -248,20 +249,30 @@ class SchemaParser:
 
         # Merge duplicate occurrences of the same canonical section or preserve missing sections if requested
         if self.schema.include_missing:
-            by_title: dict[str, ParsedSection] = {}
-            for psec in parsed_by_match:
-                if psec.title in by_title:
-                    existing = by_title[psec.title]
-                    combined = "\n\n".join(filter(None, [existing.content, psec.content]))
-                    existing.content = combined
-                    existing.subsections.extend(psec.subsections)
+            # Map each spec.title to all ParsedSections matched by that spec
+            by_spec_title: dict[str, list[ParsedSection]] = {}
+            for match, psec in zip(matches, parsed_by_match):
+                spec_key = match.spec.title
+                if spec_key not in by_spec_title:
+                    by_spec_title[spec_key] = [psec]
                 else:
-                    by_title[psec.title] = psec
+                    # Merge only if the resolved title is identical; keep consecutive distinct chapters separate
+                    existing_list = by_spec_title[spec_key]
+                    merged = False
+                    for existing in existing_list:
+                        if existing.title == psec.title:
+                            combined = "\n\n".join(filter(None, [existing.content, psec.content]))
+                            existing.content = combined
+                            existing.subsections.extend(psec.subsections)
+                            merged = True
+                            break
+                    if not merged:
+                        existing_list.append(psec)
 
             final_sections: list[ParsedSection] = []
             for spec in specs:
-                if spec.title in by_title:
-                    final_sections.append(by_title[spec.title])
+                if spec.title in by_spec_title:
+                    final_sections.extend(by_spec_title[spec.title])
                 else:
                     final_sections.append(
                         ParsedSection(

@@ -25,8 +25,9 @@ class HeaderMatch:
     end_line_idx: int  # Inclusive line index consumed by the header (can be start_line_idx + 1 for wrapped headers)
     matched_header: str
     score: float
-    match_type: str  # "exact", "regex", "fuzzy", "inline"
+    match_type: str  # "exact", "regex", "fuzzy", "inline", "repeatable"
     inline_remainder: str | None = None
+    resolved_title: str | None = None
 
 
 @dataclass
@@ -34,6 +35,48 @@ class _CompiledSectionTarget:
     spec: SectionSpec
     canonical_candidates: list[str]
     compiled_regex: re.Pattern[str] | None
+    repeatable_regexes: list[re.Pattern[str]]
+
+
+# Numbering token pattern for repeatable headings:
+# Matches digits ("1", "1.2", "03"), Roman numerals ("I", "IV", "XII"), single letters ("A", "B"),
+# or common English number words ("One".."Twenty")
+_REPEATABLE_INDEX_PATTERN = (
+    r"(?:\d+(?:\.\d+)*|[ivxlcdm]{1,6}|[a-z]|"
+    r"one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+)
+
+
+def _build_repeatable_regexes(spec: SectionSpec) -> list[re.Pattern[str]]:
+    """Build regexes matching consecutive headings like 'Chapter 1', 'Chapter II: Background', etc."""
+    if not spec.repeatable:
+        return []
+    patterns: list[re.Pattern[str]] = []
+    for prefix in spec.base_prefix_titles():
+        norm_prefix = canonicalize_header(prefix, strip_numbering=False)
+        if not norm_prefix:
+            continue
+        escaped_words = [re.escape(w) for w in norm_prefix.split()]
+        prefix_expr = r"\s+".join(escaped_words)
+        # Match:
+        #   ^<prefix>[\s\.\-\:#]* (?P<idx><index_token>) (?:[\s:\.\-\u2013\u2014]+(?P<subtitle>.+))?$
+        regex_str = (
+            rf"^\s*{prefix_expr}[\s\.\-\:#]*(?P<idx>{_REPEATABLE_INDEX_PATTERN})\b"
+            rf"(?:\s*[:\.\-\u2013\u2014]\s*(?P<subtitle>.+?)|\s+(?P<subtitle2>[A-Za-z].+?))?\s*$"
+        )
+        patterns.append(re.compile(regex_str, re.IGNORECASE))
+    return patterns
+
+
+def _format_resolved_repeatable_title(raw_text: str) -> str:
+    """Clean Markdown syntax and excess whitespace from a matched consecutive heading to produce its JSON title."""
+    cleaned = strip_markdown_header_syntax(raw_text).strip()
+    # Strip leading bullets or decorative symbols while keeping the chapter/section title and subtitle
+    cleaned = re.sub(r"^[\s\*\-\+\u2022\u2023>]+", "", cleaned).strip()
+    # Strip trailing colons/dashes at the very end of the line
+    cleaned = re.sub(r"[\s:\-\u2013\u2014]+$", "", cleaned).strip()
+    return cleaned
 
 
 def _compile_targets(
@@ -43,17 +86,26 @@ def _compile_targets(
 ) -> list[_CompiledSectionTarget]:
     targets: list[_CompiledSectionTarget] = []
     for spec in specs:
-        canon_list = [
-            canonicalize_header(title, strip_numbering=strip_numbering)
-            for title in spec.all_candidate_titles()
-        ]
+        if spec.repeatable:
+            # For repeatable specs, do not strip 'Chapter 1' prefix into empty string
+            canon_list = [
+                canonicalize_header(title, strip_numbering=False)
+                for title in spec.base_prefix_titles()
+            ]
+        else:
+            canon_list = [
+                canonicalize_header(title, strip_numbering=strip_numbering)
+                for title in spec.all_candidate_titles()
+            ]
         canon_list = [c for c in canon_list if c]
         regex_obj = re.compile(spec.pattern, re.IGNORECASE) if spec.pattern else None
+        rep_regexes = _build_repeatable_regexes(spec)
         targets.append(
             _CompiledSectionTarget(
                 spec=spec,
                 canonical_candidates=canon_list,
                 compiled_regex=regex_obj,
+                repeatable_regexes=rep_regexes,
             )
         )
     return targets
@@ -124,35 +176,70 @@ def _match_text_against_targets(
     strip_numbering: bool,
     fuzzy_threshold: float,
     allow_fuzzy: bool = True,
-) -> tuple[SectionSpec, float, str] | None:
-    """Match a candidate header string against compiled section targets."""
+) -> tuple[SectionSpec, float, str, str | None] | None:
+    """Match a candidate header string against compiled section targets.
+
+    Returns `(spec, score, match_type, resolved_title)`.
+    """
     canon = canonicalize_header(raw_text, strip_numbering=strip_numbering)
+    canon_unstripped = canonicalize_header(raw_text, strip_numbering=False)
     stripped_raw = strip_markdown_header_syntax(raw_text).strip()
 
-    # Stage 1: Exact canonical match
+    # Stage 1: Exact canonical match (non-repeatable targets)
     if canon:
         for target in targets:
-            if canon in target.canonical_candidates:
-                return (target.spec, 1.0, "exact")
+            if not target.spec.repeatable and canon in target.canonical_candidates:
+                return (target.spec, 1.0, "exact", target.spec.title)
+
+    # Stage 1b: Repeatable consecutive heading match (e.g., "Chapter 1", "Chapter 2: Methods")
+    for target in targets:
+        if target.spec.repeatable:
+            for rep_re in target.repeatable_regexes:
+                if rep_re.match(stripped_raw) or (canon_unstripped and rep_re.match(canon_unstripped)):
+                    resolved = _format_resolved_repeatable_title(raw_text)
+                    return (target.spec, 1.0, "repeatable", resolved)
 
     # Stage 2: Custom regex pattern match
     for target in targets:
         if target.compiled_regex is not None:
             if target.compiled_regex.search(stripped_raw) or (canon and target.compiled_regex.search(canon)):
-                return (target.spec, 0.99, "regex")
+                resolved = (
+                    _format_resolved_repeatable_title(raw_text)
+                    if target.spec.repeatable
+                    else target.spec.title
+                )
+                return (target.spec, 0.99, "regex", resolved)
 
-    # Stage 3: Fuzzy match
+    # Stage 3: Fuzzy match (including repeatable prefix + number when prefix has a slight typo like "Chpter 1")
     if allow_fuzzy and canon and len(canon) >= 3:
         best_spec: SectionSpec | None = None
         best_score = 0.0
+        best_resolved: str | None = None
         for target in targets:
-            for cand_target in target.canonical_candidates:
-                score = compute_header_similarity(canon, cand_target)
-                if score > best_score:
-                    best_score = score
-                    best_spec = target.spec
+            if target.spec.repeatable:
+                # Check if raw_text starts with a word followed by a number/index token
+                m_rep_fuzzy = re.match(
+                    rf"^\s*([A-Za-z]+)\s+({_REPEATABLE_INDEX_PATTERN})\b",
+                    stripped_raw,
+                    re.IGNORECASE,
+                )
+                if m_rep_fuzzy:
+                    cand_prefix = m_rep_fuzzy.group(1).casefold()
+                    for cand_target in target.canonical_candidates:
+                        score = compute_header_similarity(cand_prefix, cand_target)
+                        if score > best_score:
+                            best_score = score
+                            best_spec = target.spec
+                            best_resolved = _format_resolved_repeatable_title(raw_text)
+            else:
+                for cand_target in target.canonical_candidates:
+                    score = compute_header_similarity(canon, cand_target)
+                    if score > best_score:
+                        best_score = score
+                        best_spec = target.spec
+                        best_resolved = target.spec.title
         if best_spec is not None and best_score >= fuzzy_threshold:
-            return (best_spec, best_score, "fuzzy")
+            return (best_spec, best_score, "fuzzy", best_resolved)
 
     return None
 
@@ -217,7 +304,7 @@ def find_section_matches(
                 allow_fuzzy=True,
             )
             if res_2 is not None:
-                spec_2, score_2, mtype_2 = res_2
+                spec_2, score_2, mtype_2, resolved_2 = res_2
                 two_line_match = HeaderMatch(
                     spec=spec_2,
                     start_line_idx=i,
@@ -225,6 +312,7 @@ def find_section_matches(
                     matched_header=combined_text,
                     score=score_2,
                     match_type=mtype_2,
+                    resolved_title=resolved_2,
                 )
 
         # 2. Check single-line standalone header
@@ -240,7 +328,7 @@ def find_section_matches(
                 allow_fuzzy=True,
             )
             if res_1 is not None:
-                spec_1, score_1, mtype_1 = res_1
+                spec_1, score_1, mtype_1, resolved_1 = res_1
                 single_line_match = HeaderMatch(
                     spec=spec_1,
                     start_line_idx=i,
@@ -248,6 +336,7 @@ def find_section_matches(
                     matched_header=line.text.strip(),
                     score=score_1,
                     match_type=mtype_1,
+                    resolved_title=resolved_1,
                 )
 
         # Decide between 1-line and 2-line match if either succeeded
@@ -275,7 +364,7 @@ def find_section_matches(
                         allow_fuzzy=True,
                     )
                     if res_inline is not None:
-                        spec_in, score_in, _ = res_inline
+                        spec_in, score_in, _, resolved_in = res_inline
                         chosen = HeaderMatch(
                             spec=spec_in,
                             start_line_idx=i,
@@ -284,6 +373,7 @@ def find_section_matches(
                             score=score_in,
                             match_type="inline",
                             inline_remainder=remainder_text,
+                            resolved_title=resolved_in,
                         )
 
         if chosen is not None:
@@ -291,7 +381,8 @@ def find_section_matches(
             if ordered:
                 for idx_t, target in enumerate(all_targets[next_ordered_idx:], start=next_ordered_idx):
                     if target.spec is chosen.spec:
-                        next_ordered_idx = idx_t + 1
+                        # If the matched spec is repeatable (e.g. "Chapter {n}"), keep it active for consecutive chapters
+                        next_ordered_idx = idx_t if chosen.spec.repeatable else idx_t + 1
                         break
             i = chosen.end_line_idx + 1
         else:

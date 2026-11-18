@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping, Sequence
+
+# Detects placeholder tokens in section titles such as "{n}", "{num}", "{id}", "{roman}", "{alpha}", or "*"
+_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"(\{\s*(?:n|num|number|id|index|i|roman|alpha|letter|title|name)?\s*\}|\*)",
+    re.IGNORECASE,
+)
 
 
 class SchemaValidationError(ValueError):
@@ -18,12 +25,19 @@ class MissingRequiredSectionError(ValueError):
 
 @dataclass
 class SectionSpec:
-    """Specification for a single section (and optional nested subsections)."""
+    """Specification for a single section or a repeating consecutive section series (e.g., 'Chapter 1', 'Chapter 2').
+
+    To define a consecutive repeating section series that shares the same subsections:
+    - Set `repeatable=True` (e.g., `SectionSpec(title="Chapter", repeatable=True, subsections=[...])`), OR
+    - Use a placeholder in `title` such as `"Chapter {n}"`, `"Chapter {roman}"`, `"Part {alpha}"`, or `"Chapter *"`, OR
+    - Provide a custom `pattern` with `repeatable=True`.
+    """
 
     title: str
     aliases: list[str] = field(default_factory=list)
     pattern: str | None = None
     required: bool = False
+    repeatable: bool = False
     subsections: list[SectionSpec] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -33,6 +47,14 @@ class SectionSpec:
         self.aliases = [str(a).strip() for a in (self.aliases or []) if str(a).strip()]
         if self.pattern is not None:
             self.pattern = str(self.pattern).strip() or None
+
+        # Auto-enable `repeatable=True` if the title or any alias contains a placeholder like "{n}" or "*"
+        if not self.repeatable:
+            for candidate in [self.title, *self.aliases]:
+                if _PLACEHOLDER_TOKEN_RE.search(candidate):
+                    self.repeatable = True
+                    break
+
         parsed_subs: list[SectionSpec] = []
         for sub in self.subsections or []:
             if isinstance(sub, SectionSpec):
@@ -60,11 +82,17 @@ class SectionSpec:
         aliases = data.get("aliases") or data.get("alt_titles") or []
         if isinstance(aliases, str):
             aliases = [aliases]
+        repeatable_flag = bool(
+            data.get("repeatable", False)
+            or data.get("consecutive", False)
+            or data.get("multiple", False)
+        )
         return cls(
             title=str(title),
             aliases=list(aliases),
             pattern=data.get("pattern"),
             required=bool(data.get("required", False)),
+            repeatable=repeatable_flag,
             subsections=list(data.get("subsections") or data.get("children") or []),
         )
 
@@ -77,6 +105,15 @@ class SectionSpec:
                 seen.add(candidate)
                 result.append(candidate)
         return result
+
+    def base_prefix_titles(self) -> list[str]:
+        """Return candidate title prefixes with placeholders (`{n}`, `*`, etc.) stripped."""
+        prefixes: list[str] = []
+        for candidate in self.all_candidate_titles():
+            cleaned = _PLACEHOLDER_TOKEN_RE.sub("", candidate).strip(" :.-—–")
+            if cleaned and cleaned not in prefixes:
+                prefixes.append(cleaned)
+        return prefixes
 
 
 @dataclass
