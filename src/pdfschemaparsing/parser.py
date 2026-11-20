@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+from statistics import median
 from typing import Any, BinaryIO, Mapping, Sequence
 
 from pdfschemaparsing.ingestors.base import TextLine
@@ -113,6 +114,34 @@ class ParseResult:
         if include_footnotes:
             result["footnotes"] = [fn.to_dict() for fn in self.footnotes]
         return result
+
+    def to_markdown(
+        self,
+        *,
+        include_footnotes: bool = False,
+        base_heading_level: int = 1,
+    ) -> str:
+        """Render the parsed sections (and optional preamble/footnotes) as a clean Markdown string."""
+        parts: list[str] = []
+        if self.preamble:
+            parts.append(self.preamble)
+
+        def _render_sections(secs: list[ParsedSection], level: int) -> None:
+            hashes = "#" * min(max(level, 1), 6)
+            for sec in secs:
+                parts.append(f"{hashes} {sec.title}")
+                if sec.content:
+                    parts.append(sec.content)
+                if sec.subsections:
+                    _render_sections(sec.subsections, level + 1)
+
+        _render_sections(self.sections, base_heading_level)
+
+        if include_footnotes and self.footnotes:
+            fn_lines = [f"[^{fn.id}]: {fn.content}" for fn in self.footnotes]
+            parts.append("---\n" + "\n".join(fn_lines))
+
+        return "\n\n".join(parts).strip()
 
     def to_json(
         self,
@@ -379,6 +408,37 @@ class SchemaParser:
             include_metadata=include_metadata,
         )
 
+    def to_markdown(
+        self,
+        source: str | Path | bytes | BinaryIO,
+        *,
+        include_footnotes: bool = False,
+        backend: str = "auto",
+    ) -> str:
+        """Parse a PDF or Markdown document according to `self.schema` and render it as clean Markdown."""
+        is_pdf = False
+        if isinstance(source, (bytes, bytearray)) or hasattr(source, "read"):
+            is_pdf = True
+        elif isinstance(source, Path) and source.suffix.lower() == ".pdf":
+            is_pdf = True
+        elif isinstance(source, str) and "\n" not in source and source.lower().endswith(".pdf"):
+            if Path(source).exists():
+                is_pdf = True
+
+        if is_pdf:
+            lines = ingest_pdf(
+                source,
+                y_tolerance=self.schema.y_tolerance,
+                strip_running_headers=self.schema.strip_running_headers,
+                backend=backend,
+            )
+        else:
+            if not isinstance(source, (str, Path)):
+                raise TypeError(f"Expected str or Path for Markdown source, got {type(source).__name__}")
+            lines = ingest_markdown(source)
+
+        return self.parse_lines(lines).to_markdown(include_footnotes=include_footnotes)
+
     def extract_footnotes(
         self,
         source: str | Path | bytes | BinaryIO,
@@ -396,6 +456,81 @@ class SchemaParser:
             strip_running_headers=self.schema.strip_running_headers,
             backend=backend,
         )
+
+
+def pdf_to_markdown(
+    source: str | Path | bytes | BinaryIO,
+    *,
+    y_tolerance: float = 3.0,
+    strip_running_headers: bool = True,
+    ignore_footnotes: bool = True,
+    include_footnotes_at_end: bool = False,
+    dehyphenate: bool = True,
+    backend: str = "auto",
+) -> str:
+    """Convert a PDF file, bytes, or stream directly to clean Markdown text (without requiring a schema).
+
+    Applies all layout-resilience mechanisms:
+    - Y-tolerance vertical clustering to reconstruct jittered lines
+    - Running header, footer, and page number removal across pages
+    - Automatic Markdown heading formatting (`#`, `##`, `###`) inferred from PDF font size & bolding
+    - De-hyphenation of words wrapped across lines
+    - Exclusion of bottom-of-page footnotes from the main prose (with optional emission as `[^id]: ...` at the end)
+    """
+    lines = ingest_pdf(
+        source,
+        y_tolerance=y_tolerance,
+        strip_running_headers=strip_running_headers,
+        backend=backend,
+    )
+
+    non_blank = [ln for ln in lines if not ln.is_blank and not ln.is_footnote]
+    font_sizes = [ln.font_size for ln in non_blank if ln.font_size is not None and ln.font_size > 0]
+    body_size = median(font_sizes) if font_sizes else None
+
+    md_lines: list[str] = []
+    for ln in lines:
+        if ln.is_footnote:
+            if not ignore_footnotes:
+                md_lines.append(ln.text)
+            continue
+
+        if ln.is_blank:
+            md_lines.append("")
+            continue
+
+        text = ln.text.strip()
+        if ln.is_heading_hint:
+            # Infer heading depth (# vs ## vs ###) from relative font size
+            level = 2
+            if body_size is not None and ln.font_size is not None:
+                ratio = ln.font_size / body_size
+                if ratio >= 1.35:
+                    level = 1
+                elif ratio >= 1.15:
+                    level = 2
+                else:
+                    level = 3
+            elif ln.is_bold:
+                level = 2
+            # Ensure blank line before a Markdown heading
+            if md_lines and md_lines[-1] != "":
+                md_lines.append("")
+            clean_heading = text.lstrip("#").strip()
+            md_lines.append(f"{'#' * level} {clean_heading}")
+            md_lines.append("")
+        else:
+            md_lines.append(text)
+
+    body_md = clean_inner_text(md_lines, dehyphenate=dehyphenate, strip_inline_footnote_refs=ignore_footnotes)
+
+    if include_footnotes_at_end:
+        footnotes = extract_footnotes_from_lines(lines)
+        if footnotes:
+            fn_block = "\n".join(f"[^{fn.id}]: {fn.content}" for fn in footnotes)
+            body_md = f"{body_md}\n\n---\n{fn_block}" if body_md else fn_block
+
+    return body_md
 
 
 def extract_footnotes(

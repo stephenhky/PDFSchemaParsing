@@ -13,6 +13,7 @@ A resilient, schema-driven Python parser for **PDF** and **Markdown** documents.
   - **Running Header & Footer Removal (PDF)**: Strips repeated page headers/footers and standalone page numbers across multi-page PDFs.
   - **Footnote Filtering & Extraction**: Automatically excludes Markdown and bottom-of-page PDF footnotes (and inline `[^id]` references) from main section inner texts, and provides `parser.extract_footnotes(...)` / `extract_footnotes(...)` to retrieve them separately.
   - **Consecutive Repeating Sections**: Supports consecutive headings (`"Chapter 1"`, `"Chapter 2"`, `"Chapter III - Applications"`, etc.) sharing the same subsections via placeholder syntax (`"Chapter {n}"` / `"Chapter *"`) or `repeatable=True`.
+  - **Direct PDF-to-Markdown Conversion**: Converts PDFs directly into clean Markdown via `pdf_to_markdown(...)` (without a schema) or `parser.to_markdown(...)` (with a schema).
   - **Fuzzy Matching**: Tolerates minor OCR artifacts or typos in headings via configurable similarity thresholds.
 
 ---
@@ -380,6 +381,41 @@ print(parse_markdown(book_md, schema, as_flat_dict=True, as_json=True))
     }
   }
 }
+```
+
+---
+
+### 7. Converting a PDF Document to Markdown Text
+
+You can convert a PDF to clean Markdown in two ways:
+1. **Without a schema (`pdf_to_markdown`)**: Reconstructs jittered lines using `y_tolerance`, strips running headers/footers and page numbers, de-hyphenates wrapped words, excludes footnotes (or appends them at the bottom with `include_footnotes_at_end=True`), and infers `#` / `##` / `###` Markdown headings from PDF font sizes and bolding.
+2. **With a schema (`parser.to_markdown`)**: Segments the PDF according to your schema and renders the canonical section hierarchy as `# Section` / `## Subsection` Markdown.
+
+```python
+from pdfschemaparsing import SchemaParser, pdf_to_markdown
+
+# Option A: Direct schema-free PDF -> Markdown conversion
+md_text = pdf_to_markdown(
+    "annual_report.pdf",
+    y_tolerance=3.5,
+    strip_running_headers=True,
+    ignore_footnotes=True,
+    include_footnotes_at_end=False,  # Set True to append [^id]: ... at the bottom
+)
+print(md_text)
+
+# Option B: Schema-normalized PDF -> Markdown conversion
+parser = SchemaParser(
+    {
+        "sections": [
+            {"title": "Executive Summary", "aliases": ["Summary"]},
+            {"title": "System Architecture and Design"},
+            {"title": "Conclusion", "aliases": ["Concluding Remarks"]},
+        ]
+    }
+)
+clean_schema_md = parser.to_markdown("annual_report.pdf", include_footnotes=False)
+print(clean_schema_md)
 ```
 
 ---

@@ -13,6 +13,7 @@ from pdfschemaparsing.parser import (
     extract_footnotes,
     parse_markdown,
     parse_pdf,
+    pdf_to_markdown,
 )
 from pdfschemaparsing.footnotes import Footnote
 from pdfschemaparsing.schema import (
@@ -37,5 +38,6 @@ __all__ = [
     "normalize_unicode_and_whitespace",
     "parse_markdown",
     "parse_pdf",
+    "pdf_to_markdown",
     "strip_markdown_header_syntax",
 ]

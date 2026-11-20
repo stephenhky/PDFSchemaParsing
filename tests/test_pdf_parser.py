@@ -3,7 +3,7 @@
 from pathlib import Path
 import pymupdf as fitz
 
-from pdfschemaparsing import SchemaParser, parse_pdf
+from pdfschemaparsing import SchemaParser, parse_pdf, pdf_to_markdown
 from pdfschemaparsing.ingestors import SpanFragment, reconstruct_lines_from_spans
 
 
@@ -86,3 +86,19 @@ def test_end_to_end_pdf_with_layout_shifts_and_running_headers(tmp_path: Path) -
     parser = SchemaParser(schema)
     auto_res = parser.parse(pdf_path, as_flat_dict=True)
     assert auto_res == flat
+
+    # Test schema-guided Markdown conversion: parser.to_markdown()
+    schema_md = parser.to_markdown(pdf_path)
+    assert "# Executive Summary" in schema_md
+    assert "# System Architecture and Design" in schema_md
+    assert "# Conclusion" in schema_md
+    assert "CONFIDENTIAL ANNUAL REPORT" not in schema_md
+
+    # Test direct schema-free PDF-to-Markdown conversion: pdf_to_markdown()
+    direct_md = pdf_to_markdown(pdf_path, y_tolerance=3.5)
+    assert "## I. EXECUTIVE SUMMARY:" in direct_md
+    assert "Our cloud division outperformed expectations across all regions." in direct_md
+    assert "## 2. System Architecture & Design" in direct_md
+    assert "CONFIDENTIAL ANNUAL REPORT" not in direct_md
+    assert "Page 1 of 2" not in direct_md
+
