@@ -28,6 +28,7 @@ class HeaderMatch:
     match_type: str  # "exact", "regex", "fuzzy", "inline", "repeatable"
     inline_remainder: str | None = None
     resolved_title: str | None = None
+    original_heading: str | None = None
 
 
 @dataclass
@@ -355,6 +356,10 @@ def find_section_matches(
             )
         ):
             combined_text = f"{lines[i].text.strip()} {lines[i + 1].text.strip()}"
+            combined_orig = (
+                f"{(lines[i].raw_text or lines[i].text).strip()} "
+                f"{(lines[i + 1].raw_text or lines[i + 1].text).strip()}"
+            )
             res_2 = _match_text_against_targets(
                 combined_text,
                 active_targets,
@@ -369,6 +374,7 @@ def find_section_matches(
                     start_line_idx=i,
                     end_line_idx=i + 1,
                     matched_header=combined_text,
+                    original_heading=combined_orig,
                     score=score_2,
                     match_type=mtype_2,
                     resolved_title=resolved_2,
@@ -410,6 +416,7 @@ def find_section_matches(
                         start_line_idx=i,
                         end_line_idx=i,
                         matched_header=line.text.strip(),
+                        original_heading=(line.raw_text or line.text).strip(),
                         score=score_1,
                         match_type=mtype_1,
                         resolved_title=resolved_1,
@@ -441,6 +448,9 @@ def find_section_matches(
             if inline_m:
                 prefix_candidate = inline_m.group(1).strip()
                 remainder_text = inline_m.group(2).strip()
+                raw_source = (line.raw_text or line.text).strip()
+                raw_inline_m = _INLINE_HEADER_SPLIT_RE.match(raw_source)
+                orig_prefix = raw_inline_m.group(1).strip() if raw_inline_m else prefix_candidate
                 if len(prefix_candidate.split()) <= max_header_words:
                     res_inline = _match_text_against_targets(
                         prefix_candidate,
@@ -456,6 +466,7 @@ def find_section_matches(
                             start_line_idx=i,
                             end_line_idx=i,
                             matched_header=prefix_candidate,
+                            original_heading=orig_prefix,
                             score=score_in,
                             match_type="inline",
                             inline_remainder=remainder_text,

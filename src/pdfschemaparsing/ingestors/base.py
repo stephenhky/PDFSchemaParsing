@@ -12,6 +12,7 @@ class TextLine:
     text: str
     line_index: int
     page: int = 1
+    raw_text: str | None = None
     is_heading_hint: bool = False
     heading_level: int | None = None
     font_size: float | None = None

@@ -78,24 +78,28 @@ print(structured_json)
   "sections": [
     {
       "title": "Executive Summary",
+      "original_heading": "I.   EXECUTIVE\u00a0\u00a0SUMMARY",
       "content": "Our Q3 deployment reduced latency by 35% across all edge nodes.",
       "matched_header": "I. EXECUTIVE SUMMARY",
       "subsections": []
     },
     {
       "title": "Methodology",
+      "original_heading": "### Section 2: Materials & Methods:",
       "content": "We benchmarked 1,200 requests per second using synthetic workloads.",
       "matched_header": "### Section 2: Materials & Methods:",
       "subsections": []
     },
     {
       "title": "Results",
+      "original_heading": "**3) Key   Findings**",
       "content": "Throughput remained stable under peak load.",
       "matched_header": "**3) Key Findings**",
       "subsections": []
     },
     {
       "title": "Conclusion",
+      "original_heading": "Conclusion",
       "content": "The new architecture is ready for production.",
       "matched_header": "Conclusion",
       "subsections": []

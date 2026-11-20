@@ -24,11 +24,15 @@ class ParsedSection:
     title: str
     content: str | None
     matched_header: str | None = None
+    original_heading: str | None = None
     subsections: list[ParsedSection] = field(default_factory=list)
 
     def to_dict(self, *, include_metadata: bool = True) -> dict[str, Any]:
         data: dict[str, Any] = {
             "title": self.title,
+            "original_heading": (
+                self.original_heading if self.original_heading is not None else self.matched_header
+            ),
             "content": self.content,
         }
         if include_metadata:
@@ -269,6 +273,7 @@ class SchemaParser:
                             title=effective_title,
                             content=lead_text,
                             matched_header=match.matched_header,
+                            original_heading=match.original_heading or match.matched_header,
                             subsections=subsections,
                         )
                     )
@@ -290,6 +295,7 @@ class SchemaParser:
                     title=effective_title,
                     content=body_text,
                     matched_header=match.matched_header,
+                    original_heading=match.original_heading or match.matched_header,
                     subsections=[],
                 )
             )

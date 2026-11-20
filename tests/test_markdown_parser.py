@@ -42,6 +42,18 @@ def test_markdown_varied_heading_styles_and_whitespace() -> None:
     assert flat["Results"] == "Precision reached 99.2% across 500 documents."
     assert flat["Conclusion"] == "Final remarks on the parser architecture."
 
+    # Verify non-flat dictionary includes `original_heading` (un-normalized) on each section
+    non_flat = parse_markdown(md_doc, schema, as_flat_dict=False)
+    sec_list = non_flat["sections"]
+    assert sec_list[0]["title"] == "Executive Summary"
+    assert sec_list[0]["original_heading"] == "1. EXECUTIVE\u00a0\u00a0SUMMARY"
+    assert sec_list[1]["title"] == "Background and Motivation"
+    assert sec_list[1]["original_heading"] == "### II.   background & motivation :"
+    assert sec_list[2]["title"] == "Results"
+    assert sec_list[2]["original_heading"] == "**3) Experimental   Results**"
+    assert sec_list[3]["title"] == "Conclusion"
+    assert sec_list[3]["original_heading"] == "Conclusion"
+
 
 def test_nested_subsections_and_wrapped_headers() -> None:
     # Includes a 2-line wrapped heading ("Financial Performance\nand Outlook")

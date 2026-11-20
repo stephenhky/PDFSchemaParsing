@@ -64,6 +64,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
             result.append(
                 TextLine(
                     text=normalize_unicode_and_whitespace(raw_line, preserve_newlines=False),
+                    raw_text=raw_line.strip(),
                     line_index=line_idx,
                     page=1,
                     in_code_block=True,
@@ -81,6 +82,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                 result.append(
                     TextLine(
                         text=norm_line,
+                        raw_text=raw_line.strip(),
                         line_index=line_idx,
                         page=1,
                         is_decorative_rule=True,
@@ -98,6 +100,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                     result.append(
                         TextLine(
                             text=norm_line,
+                            raw_text=raw_line.strip(),
                             line_index=line_idx,
                             page=1,
                             is_heading_hint=True,
@@ -113,6 +116,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                     result.append(
                         TextLine(
                             text=norm_line,
+                            raw_text=raw_line.strip(),
                             line_index=line_idx,
                             page=1,
                             is_heading_hint=True,
@@ -132,6 +136,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                 result.append(
                     TextLine(
                         text=norm_line,
+                        raw_text=raw_line.strip(),
                         line_index=line_idx,
                         page=1,
                         is_heading_hint=True,
@@ -150,6 +155,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
                 result.append(
                     TextLine(
                         text=norm_line,
+                        raw_text=raw_line.strip(),
                         line_index=line_idx,
                         page=1,
                         is_heading_hint=True,
@@ -164,6 +170,7 @@ def ingest_markdown(source: str | Path) -> list[TextLine]:
         result.append(
             TextLine(
                 text=norm_line,
+                raw_text=raw_line.strip(),
                 line_index=line_idx,
                 page=1,
                 in_code_block=in_code_fence,

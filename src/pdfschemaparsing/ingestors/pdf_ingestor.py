@@ -98,6 +98,7 @@ def reconstruct_lines_from_spans(
 
         # Join spans horizontally
         parts: list[str] = []
+        raw_parts: list[str] = []
         prev_x1: float | None = None
         for s in cluster:
             piece = normalize_unicode_and_whitespace(s.text, preserve_newlines=False)
@@ -108,11 +109,13 @@ def reconstruct_lines_from_spans(
                 if parts and parts[-1].endswith(piece):
                     continue
             parts.append(piece)
+            raw_parts.append(s.text.strip("\r\n"))
             prev_x1 = s.x1 if s.x1 > s.x0 else s.x0 + len(piece) * 4.0
 
         line_text = normalize_unicode_and_whitespace(" ".join(parts), preserve_newlines=False)
         if not line_text:
             continue
+        raw_line_text = " ".join(raw_parts).strip()
 
         sizes = [s.font_size for s in cluster if s.font_size is not None and s.font_size > 0]
         avg_font_size = (sum(sizes) / len(sizes)) if sizes else None
@@ -121,6 +124,7 @@ def reconstruct_lines_from_spans(
         lines.append(
             TextLine(
                 text=line_text,
+                raw_text=raw_line_text,
                 line_index=line_idx,
                 page=page,
                 font_size=avg_font_size,
