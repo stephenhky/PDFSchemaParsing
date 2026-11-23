@@ -355,18 +355,18 @@ def ingest_pdf(
     """Ingest a PDF file, bytes, or stream into normalized TextLine objects."""
     page_lines: list[list[TextLine]] | None = None
 
-    if backend in ("auto", "pymupdf"):
+    if backend in ("auto", "pypdf"):
         try:
-            page_lines = _extract_with_pymupdf(source, y_tolerance=y_tolerance)
+            page_lines = _extract_with_pypdf(source, y_tolerance=y_tolerance)
         except ImportError:
-            if backend == "pymupdf":
+            if backend == "pypdf":
                 raise
         except Exception:
-            if backend == "pymupdf":
+            if backend == "pypdf":
                 raise
 
-    if page_lines is None and backend in ("auto", "pypdf"):
-        page_lines = _extract_with_pypdf(source, y_tolerance=y_tolerance)
+    if page_lines is None and backend in ("auto", "pymupdf"):
+        page_lines = _extract_with_pymupdf(source, y_tolerance=y_tolerance)
 
     if page_lines is None:
         raise ValueError(f"Unknown or unavailable PDF backend: {backend!r}")
