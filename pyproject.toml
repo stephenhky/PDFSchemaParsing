@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-schema-parsing"
-version = "0.0.1a4"
+version = "0.0.1"
 description = "Resilient schema-driven PDF and Markdown section parser"
 readme = "README.md"
 license = {file = "LICENSE"}
