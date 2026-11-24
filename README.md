@@ -431,3 +431,13 @@ In the `textparse` conda environment:
 ```bash
 conda run -n textparse pytest -v
 ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+### Optional PDF Backends
+- **`pypdf`** (`pip install ".[pdf]"`): Licensed under the permissive **BSD-3-Clause** license. This is the default backend when `backend="auto"`.
+- **`pymupdf`** (`pip install ".[pymupdf]"`): Licensed under **AGPL-3.0** (or a commercial license from Artifex). It is strictly optional and only used if `backend="pymupdf"` is specified or if `pypdf` is unavailable in `backend="auto"` mode. Users who opt into `pymupdf` are responsible for complying with its AGPL-3.0 or commercial licensing terms.

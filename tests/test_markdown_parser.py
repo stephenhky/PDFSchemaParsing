@@ -3,7 +3,12 @@
 import json
 import pytest
 
-from pdfschemaparsing import MissingRequiredSectionError, SchemaParser, parse_markdown
+from pdfschemaparsing import (
+    MissingRequiredSectionError,
+    MissingRequiredSectionWarning,
+    SchemaParser,
+    parse_markdown,
+)
 
 
 def test_markdown_varied_heading_styles_and_whitespace() -> None:
@@ -149,6 +154,24 @@ def test_required_section_and_include_missing() -> None:
     }
     with pytest.raises(MissingRequiredSectionError):
         parse_markdown(md_doc, schema_req)
+
+    # Emit a warning instead of raising an exception via call-level `on_missing_required="warn"`
+    with pytest.warns(MissingRequiredSectionWarning, match="Required section 'Methods' was not found"):
+        res_warn = parse_markdown(md_doc, schema_req, as_flat_dict=True, on_missing_required="warn")
+    assert res_warn == {"Introduction": "Hello world."}
+
+    # Or configure `"on_missing_required": "warn"` directly in the schema dict
+    schema_warn = {
+        "on_missing_required": "warn",
+        "include_missing": True,
+        "sections": [
+            {"title": "Introduction", "required": True},
+            {"title": "Methods", "required": True},
+        ],
+    }
+    with pytest.warns(MissingRequiredSectionWarning, match="Required section 'Methods' was not found"):
+        res_schema_warn = parse_markdown(md_doc, schema_warn, as_flat_dict=True)
+    assert res_schema_warn == {"Introduction": "Hello world.", "Methods": None}
 
     schema_opt = {
         "include_missing": True,

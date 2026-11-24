@@ -19,6 +19,7 @@ from pdfschemaparsing.footnotes import Footnote
 from pdfschemaparsing.schema import (
     DocumentSchema,
     MissingRequiredSectionError,
+    MissingRequiredSectionWarning,
     SchemaValidationError,
     SectionSpec,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "DocumentSchema",
     "Footnote",
     "MissingRequiredSectionError",
+    "MissingRequiredSectionWarning",
     "ParseResult",
     "ParsedSection",
     "SchemaParser",

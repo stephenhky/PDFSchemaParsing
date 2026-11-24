@@ -296,6 +296,21 @@ def _extract_with_pypdf(
     else:
         raise TypeError(f"Unsupported PDF source type: {type(source).__name__}")
 
+    def _mat_mult(m1: list[float], m2: list[float]) -> list[float]:
+        """Multiply two 3x3 2D affine transformation matrices represented as 6-element lists [a, b, c, d, e, f]."""
+        if len(m1) < 6 or len(m2) < 6:
+            return m2 if len(m2) >= 6 else [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        a1, b1, c1, d1, e1, f1 = float(m1[0]), float(m1[1]), float(m1[2]), float(m1[3]), float(m1[4]), float(m1[5])
+        a2, b2, c2, d2, e2, f2 = float(m2[0]), float(m2[1]), float(m2[2]), float(m2[3]), float(m2[4]), float(m2[5])
+        return [
+            a1 * a2 + b1 * c2,
+            a1 * b2 + b1 * d2,
+            c1 * a2 + d1 * c2,
+            c1 * b2 + d1 * d2,
+            e1 * a2 + f1 * c2 + e2,
+            e1 * b2 + f1 * d2 + f2,
+        ]
+
     page_lines: list[list[TextLine]] = []
     for page_num, page in enumerate(reader.pages, start=1):
         spans: list[SpanFragment] = []
@@ -303,21 +318,28 @@ def _extract_with_pypdf(
         def visitor_body(text: str, cm: list[float], tm: list[float], font_dict: dict | None, font_size: float) -> None:
             if not text or not text.strip():
                 return
-            x = float(tm[4]) if len(tm) > 4 else 0.0
-            # PDF user space has y increasing bottom-to-top; invert so top-to-bottom is ascending
-            y_pdf = float(tm[5]) if len(tm) > 5 else 0.0
+            # Compute true device/page coordinates by combining text matrix (tm) with current transformation matrix (cm)
+            m = _mat_mult(tm, cm)
+            x = float(m[4])
+            y_pdf = float(m[5])
+            # Effective rendered font size scales with the vertical scaling factor of tm * cm
+            scale_y = (float(m[2]) ** 2 + float(m[3]) ** 2) ** 0.5
+            effective_font_size = float(font_size or 12.0) * (scale_y if scale_y > 0 else 1.0)
+            # If y_UserSpace is inverted by cm (e.g. top-down CTM where d < 0), y_pdf already increases downward
+            y_top_down = y_pdf if (len(cm) >= 4 and float(cm[3]) < 0) else -y_pdf
+
             font_name = ""
             if isinstance(font_dict, dict):
                 font_name = str(font_dict.get("/BaseFont", "")).lower()
-            is_bold = "bold" in font_name
+            is_bold = ("bold" in font_name) or ("black" in font_name) or ("heavy" in font_name) or ("demi" in font_name)
             for sub_idx, raw_line in enumerate(text.splitlines()):
                 if raw_line.strip():
                     spans.append(
                         SpanFragment(
                             text=raw_line,
                             x0=x,
-                            y0=-y_pdf + (sub_idx * (font_size or 12.0)),
-                            font_size=float(font_size) if font_size else None,
+                            y0=y_top_down + (sub_idx * effective_font_size),
+                            font_size=effective_font_size if effective_font_size > 0 else None,
                             is_bold=is_bold,
                             page=page_num,
                         )
@@ -328,13 +350,40 @@ def _extract_with_pypdf(
         except Exception:
             spans = []
 
+        # Check whether span reconstruction collapsed or scrambled lines compared to pypdf's native line order
+        raw_text = page.extract_text() or ""
+        raw_non_empty = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+
         if spans:
             reconstructed = reconstruct_lines_from_spans(spans, y_tolerance=y_tolerance, page=page_num)
+            recon_non_empty = [ln for ln in reconstructed if not ln.is_blank]
+            # If coordinate clustering collapsed distinct lines (e.g. >35% fewer lines than native extraction),
+            # fall back to pypdf's native line extraction while transferring font size & bold metadata by line text.
+            if raw_non_empty and len(recon_non_empty) < len(raw_non_empty) * 0.65:
+                font_lookup: dict[str, tuple[float | None, bool]] = {}
+                for sp in spans:
+                    key = normalize_unicode_and_whitespace(sp.text, preserve_newlines=False)
+                    if key:
+                        font_lookup[key] = (sp.font_size, sp.is_bold)
+                reconstructed = []
+                for i, ln in enumerate(raw_text.splitlines()):
+                    norm_ln = normalize_unicode_and_whitespace(ln, preserve_newlines=False)
+                    f_size, f_bold = font_lookup.get(norm_ln, (None, False))
+                    reconstructed.append(
+                        TextLine(
+                            text=norm_ln,
+                            raw_text=ln.strip(),
+                            line_index=i,
+                            page=page_num,
+                            font_size=f_size,
+                            is_bold=f_bold,
+                        )
+                    )
         else:
-            raw_text = page.extract_text() or ""
             reconstructed = [
                 TextLine(
                     text=normalize_unicode_and_whitespace(ln, preserve_newlines=False),
+                    raw_text=ln.strip(),
                     line_index=i,
                     page=page_num,
                 )
@@ -355,18 +404,18 @@ def ingest_pdf(
     """Ingest a PDF file, bytes, or stream into normalized TextLine objects."""
     page_lines: list[list[TextLine]] | None = None
 
-    if backend in ("auto", "pymupdf"):
+    if backend in ("auto", "pypdf"):
         try:
-            page_lines = _extract_with_pymupdf(source, y_tolerance=y_tolerance)
+            page_lines = _extract_with_pypdf(source, y_tolerance=y_tolerance)
         except ImportError:
-            if backend == "pymupdf":
+            if backend == "pypdf":
                 raise
         except Exception:
-            if backend == "pymupdf":
+            if backend == "pypdf":
                 raise
 
-    if page_lines is None and backend in ("auto", "pypdf"):
-        page_lines = _extract_with_pypdf(source, y_tolerance=y_tolerance)
+    if page_lines is None and backend in ("auto", "pymupdf"):
+        page_lines = _extract_with_pymupdf(source, y_tolerance=y_tolerance)
 
     if page_lines is None:
         raise ValueError(f"Unknown or unavailable PDF backend: {backend!r}")

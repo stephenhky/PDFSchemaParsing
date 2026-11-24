@@ -67,11 +67,11 @@ def _build_repeatable_regexes(spec: SectionSpec) -> list[re.Pattern[str]]:
         )
         # Match:
         #   ^<opt_leading_num><prefix>(?:\s+|<punct>)(?P<idx><index_token>) (?:[\s:\.\-\u2013\u2014]+(?P<subtitle>.+))?$
-        # Note: if there is no explicit separator (: . - —) after the index token, we only allow a subtitle
-        # when it does NOT end with a period (to avoid matching body sentences like "Chapter 1 intro.")
+        # Also allow space-separated subtitles on headings (e.g. "Chapter 1 Introduction") as long as they
+        # don't end with a period like a body sentence ("Chapter 1 intro.").
         regex_str = (
             rf"^\s*{opt_leading_num}\b{prefix_expr}\b(?:[\s\.\-\:#]+)(?P<idx>{_REPEATABLE_INDEX_PATTERN})\b"
-            rf"(?:\s*[:\.\-\u2013\u2014]\s*(?P<subtitle>.+?))?\s*$"
+            rf"(?:\s*[:\.\-\u2013\u2014]\s*(?P<subtitle>.+?)|\s+(?P<subtitle2>[A-Za-z][^\.\n]*))?\s*$"
         )
         patterns.append(re.compile(regex_str, re.IGNORECASE))
     return patterns
@@ -317,8 +317,8 @@ def find_section_matches(
         if not active_targets:
             break
 
-        # If this line is an exact/repeatable match for a known child subsection and has a deeper
-        # Markdown heading level (or doesn't start with an active top-level prefix), skip it so it
+        # If this line is an exact/repeatable match for a known child subsection and either has a deeper
+        # Markdown heading level OR does not match any active parent target directly, skip it so it
         # stays inside the parent section's body for recursive subsection segmentation.
         if descendant_targets and matches:
             parent_match = matches[-1]
@@ -335,9 +335,17 @@ def find_section_matches(
                 fuzzy_threshold=0.92,
                 allow_fuzzy=False,
             )
-            if desc_res is not None and is_deeper_md_heading:
-                i += 1
-                continue
+            if desc_res is not None:
+                parent_exact = _match_text_against_targets(
+                    line.text,
+                    active_targets,
+                    strip_numbering=strip_numbering,
+                    fuzzy_threshold=0.92,
+                    allow_fuzzy=False,
+                )
+                if is_deeper_md_heading or parent_exact is None:
+                    i += 1
+                    continue
 
         # 1. Check 2-line wrapped header lookahead FIRST only if it forms an exact match
         #    (prevents matching only the first half of a wrapped heading when the 2-line join is exact)

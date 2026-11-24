@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from statistics import median
 from typing import Any, BinaryIO, Mapping, Sequence
+import warnings
 
 from pdfschemaparsing.ingestors.base import TextLine
 from pdfschemaparsing.ingestors.markdown_ingestor import ingest_markdown
@@ -14,7 +15,12 @@ from pdfschemaparsing.ingestors.pdf_ingestor import ingest_pdf
 from pdfschemaparsing.footnotes import Footnote, extract_footnotes_from_lines
 from pdfschemaparsing.matcher import find_section_matches
 from pdfschemaparsing.normalizer import clean_inner_text
-from pdfschemaparsing.schema import DocumentSchema, MissingRequiredSectionError, SectionSpec
+from pdfschemaparsing.schema import (
+    DocumentSchema,
+    MissingRequiredSectionError,
+    MissingRequiredSectionWarning,
+    SectionSpec,
+)
 
 
 @dataclass
@@ -176,13 +182,19 @@ class SchemaParser:
     ) -> None:
         self.schema = DocumentSchema.from_any(schema)
 
-    def parse_lines(self, lines: list[TextLine]) -> ParseResult:
+    def parse_lines(
+        self,
+        lines: list[TextLine],
+        *,
+        on_missing_required: str | None = None,
+    ) -> ParseResult:
         """Segment a list of ingested TextLine objects according to `self.schema`."""
         footnotes = extract_footnotes_from_lines(lines)
         sections, preamble = self._segment_block(
             lines=lines,
             specs=self.schema.sections,
             is_top_level=True,
+            on_missing_required=on_missing_required,
         )
         return ParseResult(
             sections=sections,
@@ -190,12 +202,34 @@ class SchemaParser:
             footnotes=footnotes,
         )
 
+    def _handle_missing_required(
+        self,
+        message: str,
+        *,
+        on_missing_required: str | None = None,
+    ) -> None:
+        policy = (on_missing_required or self.schema.on_missing_required).strip().lower()
+        if policy in ("warning", "warnings"):
+            policy = "warn"
+        elif policy in ("error", "exception"):
+            policy = "raise"
+
+        if policy == "raise":
+            raise MissingRequiredSectionError(message)
+        if policy == "warn":
+            warnings.warn(message, MissingRequiredSectionWarning, stacklevel=3)
+        elif policy == "ignore":
+            return
+        else:
+            raise ValueError(f"Invalid on_missing_required policy: {policy!r}")
+
     def _segment_block(
         self,
         lines: list[TextLine],
         specs: list[SectionSpec],
         *,
         is_top_level: bool = False,
+        on_missing_required: str | None = None,
     ) -> tuple[list[ParsedSection], str | None]:
         matches = find_section_matches(
             lines=lines,
@@ -211,8 +245,9 @@ class SchemaParser:
         matched_titles = {m.spec.title for m in matches}
         for spec in specs:
             if spec.required and spec.title not in matched_titles:
-                raise MissingRequiredSectionError(
-                    f"Required section '{spec.title}' was not found in the document."
+                self._handle_missing_required(
+                    f"Required section '{spec.title}' was not found in the document.",
+                    on_missing_required=on_missing_required,
                 )
 
         preamble: str | None = None
@@ -267,6 +302,7 @@ class SchemaParser:
                         lines=slice_lines,
                         specs=match.spec.subsections,
                         is_top_level=False,
+                        on_missing_required=on_missing_required,
                     )
                     parsed_by_match.append(
                         ParsedSection(
@@ -282,8 +318,9 @@ class SchemaParser:
                     # Check if any subsection was marked required
                     for sub_spec in match.spec.subsections:
                         if sub_spec.required:
-                            raise MissingRequiredSectionError(
-                                f"Required subsection '{sub_spec.title}' under '{effective_title}' was not found."
+                            self._handle_missing_required(
+                                f"Required subsection '{sub_spec.title}' under '{effective_title}' was not found.",
+                                on_missing_required=on_missing_required,
                             )
 
             body_text = clean_inner_text(
@@ -346,10 +383,11 @@ class SchemaParser:
         as_json: bool = False,
         as_flat_dict: bool = False,
         include_metadata: bool = True,
+        on_missing_required: str | None = None,
     ) -> dict[str, Any] | str:
         """Parse a Markdown string or file into a structured dictionary or JSON string."""
         lines = ingest_markdown(source)
-        result = self.parse_lines(lines)
+        result = self.parse_lines(lines, on_missing_required=on_missing_required)
         if as_json:
             return result.to_json(as_flat_dict=as_flat_dict, include_metadata=include_metadata)
         return result.to_dict(as_flat_dict=as_flat_dict, include_metadata=include_metadata)
@@ -362,6 +400,7 @@ class SchemaParser:
         as_flat_dict: bool = False,
         include_metadata: bool = True,
         backend: str = "auto",
+        on_missing_required: str | None = None,
     ) -> dict[str, Any] | str:
         """Parse a PDF file, bytes, or stream into a structured dictionary or JSON string."""
         lines = ingest_pdf(
@@ -370,7 +409,7 @@ class SchemaParser:
             strip_running_headers=self.schema.strip_running_headers,
             backend=backend,
         )
-        result = self.parse_lines(lines)
+        result = self.parse_lines(lines, on_missing_required=on_missing_required)
         if as_json:
             return result.to_json(as_flat_dict=as_flat_dict, include_metadata=include_metadata)
         return result.to_dict(as_flat_dict=as_flat_dict, include_metadata=include_metadata)
@@ -382,6 +421,7 @@ class SchemaParser:
         as_json: bool = False,
         as_flat_dict: bool = False,
         include_metadata: bool = True,
+        on_missing_required: str | None = None,
     ) -> dict[str, Any] | str:
         """Auto-detect PDF vs Markdown/text and parse into a structured dictionary or JSON string."""
         if isinstance(source, (bytes, bytearray)) or hasattr(source, "read"):
@@ -390,6 +430,7 @@ class SchemaParser:
                 as_json=as_json,
                 as_flat_dict=as_flat_dict,
                 include_metadata=include_metadata,
+                on_missing_required=on_missing_required,
             )
         if isinstance(source, Path) and source.suffix.lower() == ".pdf":
             return self.parse_pdf(
@@ -397,6 +438,7 @@ class SchemaParser:
                 as_json=as_json,
                 as_flat_dict=as_flat_dict,
                 include_metadata=include_metadata,
+                on_missing_required=on_missing_required,
             )
         if isinstance(source, str) and "\n" not in source and source.lower().endswith(".pdf"):
             candidate = Path(source)
@@ -406,12 +448,14 @@ class SchemaParser:
                     as_json=as_json,
                     as_flat_dict=as_flat_dict,
                     include_metadata=include_metadata,
+                    on_missing_required=on_missing_required,
                 )
         return self.parse_markdown(
             source,
             as_json=as_json,
             as_flat_dict=as_flat_dict,
             include_metadata=include_metadata,
+            on_missing_required=on_missing_required,
         )
 
     def to_markdown(
@@ -420,6 +464,7 @@ class SchemaParser:
         *,
         include_footnotes: bool = False,
         backend: str = "auto",
+        on_missing_required: str | None = None,
     ) -> str:
         """Parse a PDF or Markdown document according to `self.schema` and render it as clean Markdown."""
         is_pdf = False
@@ -443,7 +488,9 @@ class SchemaParser:
                 raise TypeError(f"Expected str or Path for Markdown source, got {type(source).__name__}")
             lines = ingest_markdown(source)
 
-        return self.parse_lines(lines).to_markdown(include_footnotes=include_footnotes)
+        return self.parse_lines(lines, on_missing_required=on_missing_required).to_markdown(
+            include_footnotes=include_footnotes
+        )
 
     def extract_footnotes(
         self,
@@ -593,6 +640,7 @@ def parse_markdown(
     as_json: bool = False,
     as_flat_dict: bool = False,
     include_metadata: bool = True,
+    on_missing_required: str | None = None,
 ) -> dict[str, Any] | str:
     """Convenience function to parse Markdown or plain text with a schema."""
     parser = SchemaParser(schema)
@@ -601,6 +649,7 @@ def parse_markdown(
         as_json=as_json,
         as_flat_dict=as_flat_dict,
         include_metadata=include_metadata,
+        on_missing_required=on_missing_required,
     )
 
 
@@ -612,6 +661,7 @@ def parse_pdf(
     as_flat_dict: bool = False,
     include_metadata: bool = True,
     backend: str = "auto",
+    on_missing_required: str | None = None,
 ) -> dict[str, Any] | str:
     """Convenience function to parse a PDF file/bytes with a schema."""
     parser = SchemaParser(schema)
@@ -621,4 +671,5 @@ def parse_pdf(
         as_flat_dict=as_flat_dict,
         include_metadata=include_metadata,
         backend=backend,
+        on_missing_required=on_missing_required,
     )
