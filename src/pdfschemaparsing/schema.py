@@ -23,6 +23,10 @@ class MissingRequiredSectionError(ValueError):
     """Raised when a schema section marked `required=True` is missing in the document."""
 
 
+class MissingRequiredSectionWarning(UserWarning):
+    """Warning emitted when a required section is missing and `on_missing_required='warn'`."""
+
+
 @dataclass
 class SectionSpec:
     """Specification for a single section or a repeating consecutive section series (e.g., 'Chapter 1', 'Chapter 2').
@@ -133,6 +137,7 @@ class DocumentSchema:
     max_header_chars: int = 120
     capture_preamble: bool = False
     include_missing: bool = False
+    on_missing_required: str = "raise"
     y_tolerance: float = 3.0
     strip_running_headers: bool = True
 
@@ -155,6 +160,15 @@ class DocumentSchema:
             raise SchemaValidationError("fuzzy_threshold must be between 0.0 and 1.0.")
         if self.max_header_words < 1 or self.max_header_chars < 1:
             raise SchemaValidationError("max_header_words and max_header_chars must be positive integers.")
+        self.on_missing_required = str(self.on_missing_required).strip().lower()
+        if self.on_missing_required in ("warning", "warnings"):
+            self.on_missing_required = "warn"
+        elif self.on_missing_required in ("error", "exception"):
+            self.on_missing_required = "raise"
+        if self.on_missing_required not in ("raise", "warn", "ignore"):
+            raise SchemaValidationError(
+                "on_missing_required must be 'raise', 'warn', or 'ignore'."
+            )
 
     @classmethod
     def from_any(
@@ -194,6 +208,7 @@ class DocumentSchema:
                     max_header_chars=int(source.get("max_header_chars", 120)),
                     capture_preamble=bool(source.get("capture_preamble", False)),
                     include_missing=bool(source.get("include_missing", False)),
+                    on_missing_required=str(source.get("on_missing_required", "raise")),
                     y_tolerance=float(source.get("y_tolerance", 3.0)),
                     strip_running_headers=bool(source.get("strip_running_headers", True)),
                 )

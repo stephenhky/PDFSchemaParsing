@@ -64,7 +64,7 @@ def test_end_to_end_pdf_with_layout_shifts_and_running_headers(tmp_path: Path) -
         ],
     }
 
-    # Test with default (pymupdf) backend
+    # Test with explicit pymupdf backend
     flat = parse_pdf(pdf_path, schema, as_flat_dict=True, backend="pymupdf")
     assert flat["Executive Summary"] == "Our cloud division outperformed expectations across all regions."
     assert (
@@ -77,10 +77,19 @@ def test_end_to_end_pdf_with_layout_shifts_and_running_headers(tmp_path: Path) -
         assert "CONFIDENTIAL ANNUAL REPORT" not in val
         assert "Page " not in val
 
-    # Test with pypdf fallback backend as well
+    # Test with pypdf backend (default in "auto" mode)
     flat_pypdf = parse_pdf(pdf_path, schema, as_flat_dict=True, backend="pypdf")
     assert "outperformed expectations" in flat_pypdf["Executive Summary"]
     assert "All validation tests passed successfully." in flat_pypdf["Conclusion"]
+
+    # Test non-flat dictionary output from pypdf backend includes title, original_heading, and content
+    non_flat_pypdf = parse_pdf(pdf_path, schema, as_flat_dict=False, backend="pypdf")
+    assert [s["title"] for s in non_flat_pypdf["sections"]] == [
+        "Executive Summary",
+        "System Architecture and Design",
+        "Conclusion",
+    ]
+    assert non_flat_pypdf["sections"][0]["original_heading"] == "I. EXECUTIVE SUMMARY:"
 
     # Test auto-detection via SchemaParser.parse()
     parser = SchemaParser(schema)
@@ -101,4 +110,52 @@ def test_end_to_end_pdf_with_layout_shifts_and_running_headers(tmp_path: Path) -
     assert "## 2. System Architecture & Design" in direct_md
     assert "CONFIDENTIAL ANNUAL REPORT" not in direct_md
     assert "Page 1 of 2" not in direct_md
+
+
+def test_pypdf_ctm_transformed_pdf_headings(tmp_path: Path) -> None:
+    """Verify pypdf backend extracts headings properly when PDF uses CTM (`cm`) translations instead of `tm`."""
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    pdf_path = tmp_path / "ctm_translated.pdf"
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+
+    # Set up standard Helvetica font resource
+    font_dict = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_dict})}
+    )
+
+    # Content stream where `tm` stays at (0, 0) (via BT ... ET) and vertical positioning is done purely via `cm`!
+    content_stream = DecodedStreamObject()
+    stream_text = "\n".join(
+        [
+            "q 1 0 0 1 72 700 cm BT /F1 14 Tf (1. Introduction) Tj ET Q",
+            "q 1 0 0 1 72 675 cm BT /F1 11 Tf (First paragraph of the introduction.) Tj ET Q",
+            "q 1 0 0 1 72 620 cm BT /F1 14 Tf (2. Methodology) Tj ET Q",
+            "q 1 0 0 1 72 595 cm BT /F1 11 Tf (Details of the experimental setup.) Tj ET Q",
+        ]
+    )
+    content_stream.set_data(stream_text.encode("latin1"))
+    page[NameObject("/Contents")] = content_stream
+
+    with open(pdf_path, "wb") as f:
+        writer.write(f)
+
+    schema = {"sections": ["Introduction", "Methodology"]}
+    res = parse_pdf(pdf_path, schema, backend="pypdf")
+    titles = [sec["title"] for sec in res["sections"]]
+    assert titles == ["Introduction", "Methodology"]
+    assert res["sections"][0]["original_heading"] == "1. Introduction"
+    assert res["sections"][0]["content"] == "First paragraph of the introduction."
+    assert res["sections"][1]["original_heading"] == "2. Methodology"
+    assert res["sections"][1]["content"] == "Details of the experimental setup."
+
 
